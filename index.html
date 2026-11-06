@@ -1,4 +1,4 @@
-Aucun élément sélectionné 
+
 
 Aller au contenu
 Utiliser Gmail avec un lecteur d'écran
@@ -19,87 +19,251 @@ index.html
 <style>
   html, body { height: 100%; margin: 0; font-family: system-ui, sans-serif; }
   #map { height: 100%; }
+  #modes {
+    position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 1000;
+    display: flex; background: #fff; border-radius: 22px; overflow: hidden;
+    box-shadow: 0 2px 10px rgba(0,0,0,.3);
+  }
+  #modes button {
+    border: 0; background: #fff; padding: 9px 16px; font-size: 14px; cursor: pointer;
+  }
+  #modes button.actif { background: #0a7d32; color: #fff; font-weight: 700; }
   #panneau {
     position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 1000;
     background: #fff; border-radius: 10px; padding: 10px 12px;
-    box-shadow: 0 2px 10px rgba(0,0,0,.3); font-size: 14px; line-height: 1.35;
+    box-shadow: 0 2px 10px rgba(0,0,0,.3); font-size: 14px; line-height: 1.4;
   }
   #panneau .ok { color: #0a7d32; font-weight: 700; }
   #panneau .non { color: #c0392b; font-weight: 700; }
   #panneau small { color: #666; display: block; margin-top: 4px; }
+  #panneau select { font-size: 14px; padding: 4px; margin-top: 6px; }
+  .pop { min-width: 210px; font-size: 14px; }
+  .pop h4 { margin: 0 0 8px; font-size: 15px; }
+  .pop label { display: block; margin: 6px 0 2px; font-size: 13px; color: #444; }
+  .pop select, .pop input[type=date], .pop textarea {
+    width: 100%; box-sizing: border-box; font-size: 14px; padding: 5px;
+  }
+  .pop textarea { height: 60px; resize: vertical; }
+  .pop .ligne { display: flex; gap: 6px; margin-top: 10px; }
+  .pop button { flex: 1; padding: 8px; font-size: 14px; border: 0; border-radius: 6px; cursor: pointer; }
+  .pop .sauver { background: #0a7d32; color: #fff; font-weight: 700; }
+  .pop .effacer { background: #eee; }
+  .legende span { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin: 0 3px 0 8px; vertical-align: middle; }
 </style>
 </head>
 <body>
 <div id="map"></div>
-<div id="panneau">Touchez la carte pour tester un emplacement.<small>Résultat indicatif, pas une certification légale.</small></div>
+<div id="modes">
+  <button id="btnPharmacien" class="actif">Pharmacien</button>
+  <button id="btnDelegue">Délégué</button>
+</div>
+<div id="panneau"></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-  const RAYON = 300; // règle des 300 m
-  const map = L.map('map').setView([34.0331, -5.0003], 13);
+  const RAYON = 300;
+  const CLE = 'visites_pharmacies_fes';
+  const COULEURS = { aucun: '#2ecc71', a_visiter: '#f39c12', visitee: '#2980b9' };
 
+  const map = L.map('map').setView([34.0331, -5.0003], 13);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '&copy; contributeurs OpenStreetMap'
   }).addTo(map);
 
-  const pharmacies = []; // { nom, latlng }
-  let marqueur = null, cercle = null, ligne = null;
   const panneau = document.getElementById('panneau');
+  const pharmacies = []; // { id, nom, latlng, layer }
+  let mode = 'pharmacien';
+  let marqueur = null, cercle = null, ligne = null;
+  let filtre = 'toutes';
 
-  // Nettoie les "????" laissés par l'encodage
+  // ---------- Stockage local (téléphone) ----------
+  let donnees = {};
+  try { donnees = JSON.parse(localStorage.getItem(CLE) || '{}'); } catch (e) { donnees = {}; }
+  function sauver() {
+    try { localStorage.setItem(CLE, JSON.stringify(donnees)); } catch (e) {}
+  }
+  function infos(id) { return donnees[id] || { statut: 'aucun', fav: false, date: '', note: '' }; }
+
   function nettoyer(nom) {
     const n = (nom || '').replace(/\?+/g, '').replace(/\s+/g, ' ').trim();
     return n || 'Pharmacie (nom inconnu)';
   }
 
+  // ---------- Style des points ----------
+  function styler(p) {
+    const i = infos(p.id);
+    p.layer.setStyle({
+      radius: i.fav ? 9 : 6,
+      fillColor: COULEURS[i.statut] || COULEURS.aucun,
+      color: i.fav ? '#f1c40f' : '#333',
+      weight: i.fav ? 4 : 2,
+      fillOpacity: 0.95
+    });
+  }
+
+  function visible(p) {
+    const i = infos(p.id);
+    if (mode === 'pharmacien' || filtre === 'toutes') return true;
+    if (filtre === 'a_visiter') return i.statut === 'a_visiter';
+    if (filtre === 'visitee') return i.statut === 'visitee';
+    if (filtre === 'non_visitee') return i.statut !== 'visitee';
+    if (filtre === 'favorites') return i.fav;
+    return true;
+  }
+
+  function rafraichir() {
+    pharmacies.forEach(p => {
+      styler(p);
+      const dedans = couche.hasLayer(p.layer);
+      if (visible(p) && !dedans) couche.addLayer(p.layer);
+      if (!visible(p) && dedans) couche.removeLayer(p.layer);
+    });
+    afficherPanneau();
+  }
+
+  // ---------- Panneaux ----------
+  function afficherPanneau(resultatHtml) {
+    if (mode === 'pharmacien') {
+      panneau.innerHTML = resultatHtml ||
+        'Touchez la carte pour tester un emplacement.' +
+        '<small>Résultat indicatif, pas une certification légale.</small>';
+      return;
+    }
+    let v = 0, a = 0, f = 0;
+    pharmacies.forEach(p => {
+      const i = infos(p.id);
+      if (i.statut === 'visitee') v++;
+      if (i.statut === 'a_visiter') a++;
+      if (i.fav) f++;
+    });
+    panneau.innerHTML =
+      '<div><b>' + v + '</b> visitées · <b>' + a + '</b> à visiter · <b>' + f + '</b> favorites</div>' +
+      '<div class="legende"><span style="background:' + COULEURS.aucun + '"></span>aucun' +
+      '<span style="background:' + COULEURS.a_visiter + '"></span>à visiter' +
+      '<span style="background:' + COULEURS.visitee + '"></span>visitée' +
+      '<span style="background:#fff;border:3px solid #f1c40f"></span>favorite</div>' +
+      '<select id="filtre">' +
+      opt('toutes', 'Afficher : toutes') +
+      opt('a_visiter', 'Afficher : à visiter') +
+      opt('visitee', 'Afficher : visitées') +
+      opt('non_visitee', 'Afficher : non visitées') +
+      opt('favorites', 'Afficher : favorites') +
+      '</select>' +
+      '<small>Touchez une pharmacie pour la modifier. Données enregistrées sur ce téléphone.</small>';
+    document.getElementById('filtre').addEventListener('change', (e) => {
+      filtre = e.target.value;
+      rafraichir();
+    });
+  }
+  function opt(v, t) { return '<option value="' + v + '"' + (filtre === v ? ' selected' : '') + '>' + t + '</option>'; }
+
+  // ---------- Formulaire délégué ----------
+  function formulaire(p) {
+    const i = infos(p.id);
+    const div = document.createElement('div');
+    div.className = 'pop';
+    div.innerHTML =
+      '<h4></h4>' +
+      '<label>Statut</label>' +
+      '<select class="statut">' +
+        '<option value="aucun">Aucun</option>' +
+        '<option value="a_visiter">À visiter</option>' +
+        '<option value="visitee">Visitée</option>' +
+      '</select>' +
+      '<label>Date de la dernière visite</label>' +
+      '<input type="date" class="date">' +
+      '<label><input type="checkbox" class="fav"> ★ Favorite</label>' +
+      '<label>Note (médecin rencontré, produit, rappel)</label>' +
+      '<textarea class="note"></textarea>' +
+      '<div class="ligne"><button class="sauver">Enregistrer</button><button class="effacer">Effacer</button></div>';
+    div.querySelector('h4').textContent = p.nom;
+    const sStatut = div.querySelector('.statut');
+    const sDate = div.querySelector('.date');
+    const sFav = div.querySelector('.fav');
+    const sNote = div.querySelector('.note');
+    sStatut.value = i.statut; sDate.value = i.date; sFav.checked = i.fav; sNote.value = i.note;
+
+    // Si on passe à "Visitée" sans date, mettre la date du jour
+    sStatut.addEventListener('change', () => {
+      if (sStatut.value === 'visitee' && !sDate.value) {
+        sDate.value = new Date().toISOString().slice(0, 10);
+      }
+    });
+    div.querySelector('.sauver').addEventListener('click', () => {
+      donnees[p.id] = { statut: sStatut.value, fav: sFav.checked, date: sDate.value, note: sNote.value };
+      sauver(); map.closePopup(); rafraichir();
+    });
+    div.querySelector('.effacer').addEventListener('click', () => {
+      delete donnees[p.id];
+      sauver(); map.closePopup(); rafraichir();
+    });
+    return div;
+  }
+
+  // ---------- Mode pharmacien : clic sur la carte ----------
   function plusProche(latlng) {
     let meilleure = null, dmin = Infinity;
     for (const p of pharmacies) {
-      const d = map.distance(latlng, p.latlng); // mètres
+      const d = map.distance(latlng, p.latlng);
       if (d < dmin) { dmin = d; meilleure = p; }
     }
     return { pharmacie: meilleure, distance: dmin };
   }
-
+  function effacerTest() {
+    [marqueur, cercle, ligne].forEach(l => l && map.removeLayer(l));
+    marqueur = cercle = ligne = null;
+  }
   map.on('click', (e) => {
-    if (!pharmacies.length) return;
+    if (mode !== 'pharmacien' || !pharmacies.length) return;
     const { pharmacie, distance } = plusProche(e.latlng);
     const respecte = distance >= RAYON;
-
-    [marqueur, cercle, ligne].forEach(l => l && map.removeLayer(l));
+    effacerTest();
     marqueur = L.marker(e.latlng).addTo(map);
-    cercle = L.circle(e.latlng, {
-      radius: RAYON,
-      color: respecte ? '#0a7d32' : '#c0392b',
-      fillOpacity: 0.1
-    }).addTo(map);
-    ligne = L.polyline([e.latlng, pharmacie.latlng], {
-      color: '#333', dashArray: '5,6', weight: 2
-    }).addTo(map);
-
-    panneau.innerHTML =
+    cercle = L.circle(e.latlng, { radius: RAYON, color: respecte ? '#0a7d32' : '#c0392b', fillOpacity: 0.1 }).addTo(map);
+    ligne = L.polyline([e.latlng, pharmacie.latlng], { color: '#333', dashArray: '5,6', weight: 2 }).addTo(map);
+    afficherPanneau(
       '<div>Pharmacie la plus proche : <b>' + pharmacie.nom + '</b></div>' +
       '<div>Distance : <b>' + Math.round(distance) + ' m</b></div>' +
       '<div class="' + (respecte ? 'ok' : 'non') + '">' +
       (respecte ? 'Règle des 300 m respectée' : 'Trop proche : moins de 300 m') + '</div>' +
-      '<small>Résultat indicatif (mesure depuis le point, pas la façade). Pas une certification légale.</small>';
+      '<small>Résultat indicatif (mesure depuis le point, pas la façade). Pas une certification légale.</small>'
+    );
   });
+
+  // ---------- Changement de mode ----------
+  function changerMode(m) {
+    mode = m;
+    document.getElementById('btnPharmacien').classList.toggle('actif', m === 'pharmacien');
+    document.getElementById('btnDelegue').classList.toggle('actif', m === 'delegue');
+    map.closePopup();
+    effacerTest();
+    rafraichir();
+  }
+  document.getElementById('btnPharmacien').addEventListener('click', () => changerMode('pharmacien'));
+  document.getElementById('btnDelegue').addEventListener('click', () => changerMode('delegue'));
+
+  // ---------- Chargement des pharmacies ----------
+  const couche = L.layerGroup().addTo(map);
+  afficherPanneau();
 
   fetch('pharmacies_fes.geojson')
     .then(r => r.json())
     .then(data => {
-      const couche = L.geoJSON(data, {
-        pointToLayer: (feature, latlng) => {
-          const nom = nettoyer(feature.properties && feature.properties.name);
-          pharmacies.push({ nom, latlng });
-          return L.circleMarker(latlng, {
-            radius: 6, color: '#0a7d32', fillColor: '#2ecc71',
-            fillOpacity: 0.9, weight: 2,
-            bubblingMouseEvents: false // un tap sur une pharmacie ne pose pas d'épingle
-          }).bindPopup(nom);
-        }
-      }).addTo(map);
-      map.fitBounds(couche.getBounds());
+      const bornes = [];
+      data.features.forEach(f => {
+        if (!f.geometry || f.geometry.type !== 'Point') return;
+        const [lon, lat] = f.geometry.coordinates;
+        const latlng = L.latLng(lat, lon);
+        const nom = nettoyer(f.properties && f.properties.name);
+        const id = lon.toFixed(6) + ',' + lat.toFixed(6);
+        const layer = L.circleMarker(latlng, { radius: 6, bubblingMouseEvents: false });
+        const p = { id, nom, latlng, layer };
+        layer.bindPopup(() => mode === 'delegue' ? formulaire(p) : nom);
+        pharmacies.push(p);
+        bornes.push(latlng);
+      });
+      map.fitBounds(L.latLngBounds(bornes));
+      rafraichir();
     })
     .catch(err => { panneau.textContent = 'Erreur de chargement des pharmacies : ' + err; });
 </script>
