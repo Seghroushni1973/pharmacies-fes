@@ -1,0 +1,15 @@
+{
+  "name": "Pharmacies de Fès",
+  "short_name": "Pharmacies Fès",
+  "description": "Règle des 300 m et suivi des visites pour les pharmacies de Fès",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0a7d32",
+  "lang": "fr",
+  "icons": [
+    { "src": "icone-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
