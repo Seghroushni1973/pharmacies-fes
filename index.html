@@ -1,3 +1,14 @@
+Aucun élément sélectionné 
+
+Aller au contenu
+Utiliser Gmail avec un lecteur d'écran
+Conversations
+63 % sur 15 Go utilisés
+Conditions d'utilisation · Confidentialité · Règlement du programme
+Dernière activité sur le compte : il y a 0 minute
+Détails
+index.html
+100 %
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -6,14 +17,24 @@
 <title>Pharmacies de Fès</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-  html, body, #map { height: 100%; margin: 0; }
+  html, body { height: 100%; margin: 0; font-family: system-ui, sans-serif; }
+  #map { height: 100%; }
+  #panneau {
+    position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 1000;
+    background: #fff; border-radius: 10px; padding: 10px 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.3); font-size: 14px; line-height: 1.35;
+  }
+  #panneau .ok { color: #0a7d32; font-weight: 700; }
+  #panneau .non { color: #c0392b; font-weight: 700; }
+  #panneau small { color: #666; display: block; margin-top: 4px; }
 </style>
 </head>
 <body>
 <div id="map"></div>
+<div id="panneau">Touchez la carte pour tester un emplacement.<small>Résultat indicatif, pas une certification légale.</small></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-  // Carte centrée sur Fès
+  const RAYON = 300; // règle des 300 m
   const map = L.map('map').setView([34.0331, -5.0003], 13);
 
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -21,27 +42,67 @@
     attribution: '&copy; contributeurs OpenStreetMap'
   }).addTo(map);
 
-  // Chargement des pharmacies
+  const pharmacies = []; // { nom, latlng }
+  let marqueur = null, cercle = null, ligne = null;
+  const panneau = document.getElementById('panneau');
+
+  // Nettoie les "????" laissés par l'encodage
+  function nettoyer(nom) {
+    const n = (nom || '').replace(/\?+/g, '').replace(/\s+/g, ' ').trim();
+    return n || 'Pharmacie (nom inconnu)';
+  }
+
+  function plusProche(latlng) {
+    let meilleure = null, dmin = Infinity;
+    for (const p of pharmacies) {
+      const d = map.distance(latlng, p.latlng); // mètres
+      if (d < dmin) { dmin = d; meilleure = p; }
+    }
+    return { pharmacie: meilleure, distance: dmin };
+  }
+
+  map.on('click', (e) => {
+    if (!pharmacies.length) return;
+    const { pharmacie, distance } = plusProche(e.latlng);
+    const respecte = distance >= RAYON;
+
+    [marqueur, cercle, ligne].forEach(l => l && map.removeLayer(l));
+    marqueur = L.marker(e.latlng).addTo(map);
+    cercle = L.circle(e.latlng, {
+      radius: RAYON,
+      color: respecte ? '#0a7d32' : '#c0392b',
+      fillOpacity: 0.1
+    }).addTo(map);
+    ligne = L.polyline([e.latlng, pharmacie.latlng], {
+      color: '#333', dashArray: '5,6', weight: 2
+    }).addTo(map);
+
+    panneau.innerHTML =
+      '<div>Pharmacie la plus proche : <b>' + pharmacie.nom + '</b></div>' +
+      '<div>Distance : <b>' + Math.round(distance) + ' m</b></div>' +
+      '<div class="' + (respecte ? 'ok' : 'non') + '">' +
+      (respecte ? 'Règle des 300 m respectée' : 'Trop proche : moins de 300 m') + '</div>' +
+      '<small>Résultat indicatif (mesure depuis le point, pas la façade). Pas une certification légale.</small>';
+  });
+
   fetch('pharmacies_fes.geojson')
     .then(r => r.json())
     .then(data => {
       const couche = L.geoJSON(data, {
-        pointToLayer: (feature, latlng) =>
-          L.circleMarker(latlng, {
-            radius: 6,
-            color: '#0a7d32',
-            fillColor: '#2ecc71',
-            fillOpacity: 0.9,
-            weight: 2
-          }),
-        onEachFeature: (feature, layer) => {
-          const nom = (feature.properties && feature.properties.name) || 'Pharmacie (nom inconnu)';
-          layer.bindPopup(nom);
+        pointToLayer: (feature, latlng) => {
+          const nom = nettoyer(feature.properties && feature.properties.name);
+          pharmacies.push({ nom, latlng });
+          return L.circleMarker(latlng, {
+            radius: 6, color: '#0a7d32', fillColor: '#2ecc71',
+            fillOpacity: 0.9, weight: 2,
+            bubblingMouseEvents: false // un tap sur une pharmacie ne pose pas d'épingle
+          }).bindPopup(nom);
         }
       }).addTo(map);
       map.fitBounds(couche.getBounds());
     })
-    .catch(err => alert('Erreur de chargement des pharmacies : ' + err));
+    .catch(err => { panneau.textContent = 'Erreur de chargement des pharmacies : ' + err; });
 </script>
 </body>
 </html>
+Affichage de index.html en cours...
