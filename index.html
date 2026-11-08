@@ -40,6 +40,7 @@
   .pop button { flex: 1; padding: 8px; font-size: 14px; border: 0; border-radius: 6px; cursor: pointer; }
   .pop .sauver { background: #0a7d32; color: #fff; font-weight: 700; }
   .pop .effacer { background: #eee; }
+  .btn-iti { display: block; margin-top: 10px; padding: 10px; text-align: center; background: #1a73e8; color: #fff !important; text-decoration: none; border-radius: 6px; font-weight: 700; font-size: 14px; }
   .legende span { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin: 0 3px 0 8px; vertical-align: middle; }
 </style>
 </head>
@@ -149,6 +150,45 @@
   }
   function opt(v, t) { return '<option value="' + v + '"' + (filtre === v ? ' selected' : '') + '>' + t + '</option>'; }
 
+  // ---------- Itinéraire (ouvre Google Maps / l'appli Maps du téléphone) ----------
+  function boutonItineraire(p) {
+    const a = document.createElement('a');
+    a.className = 'btn-iti';
+    a.textContent = '\u{1F9ED} Itinéraire';
+    a.href = 'https://www.google.com/maps/dir/?api=1&destination=' + p.latlng.lat + ',' + p.latlng.lng + '&travelmode=driving';
+    a.target = '_blank';
+    a.rel = 'noopener';
+    return a;
+  }
+
+  function ligneTel(p) {
+    const d = document.createElement('div');
+    d.style.margin = '0 0 6px';
+    if (p.tel) {
+      const premier = p.tel.split(/[;,\/]/)[0].replace(/[^\d+]/g, '');
+      const a = document.createElement('a');
+      a.href = 'tel:' + premier;
+      a.textContent = '\u{1F4DE} ' + p.tel;
+      a.style.fontWeight = '700';
+      d.appendChild(a);
+    } else {
+      d.textContent = 'Téléphone non renseigné';
+      d.style.color = '#888';
+    }
+    return d;
+  }
+
+  function popupSimple(p) {
+    const div = document.createElement('div');
+    div.className = 'pop';
+    const h = document.createElement('h4');
+    h.textContent = p.nom;
+    div.appendChild(h);
+    div.appendChild(ligneTel(p));
+    div.appendChild(boutonItineraire(p));
+    return div;
+  }
+
   // ---------- Formulaire délégué ----------
   function formulaire(p) {
     const i = infos(p.id);
@@ -169,6 +209,7 @@
       '<textarea class="note"></textarea>' +
       '<div class="ligne"><button class="sauver">Enregistrer</button><button class="effacer">Effacer</button></div>';
     div.querySelector('h4').textContent = p.nom;
+    div.querySelector('h4').after(ligneTel(p));
     const sStatut = div.querySelector('.statut');
     const sDate = div.querySelector('.date');
     const sFav = div.querySelector('.fav');
@@ -189,6 +230,7 @@
       delete donnees[p.id];
       sauver(); map.closePopup(); rafraichir();
     });
+    div.appendChild(boutonItineraire(p));
     return div;
   }
 
@@ -218,6 +260,10 @@
       '<div>Distance : <b>' + Math.round(distance) + ' m</b></div>' +
       '<div class="' + (respecte ? 'ok' : 'non') + '">' +
       (respecte ? 'Règle des 300 m respectée' : 'Trop proche : moins de 300 m') + '</div>' +
+      (respecte
+        ? '<a class="btn-iti" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=' +
+          e.latlng.lat.toFixed(6) + ',' + e.latlng.lng.toFixed(6) + '&travelmode=driving">\u{1F9ED} Itinéraire vers cet emplacement</a>'
+        : '') +
       '<small>Résultat indicatif (mesure depuis le point, pas la façade). Pas une certification légale.</small>'
     );
   });
@@ -247,10 +293,11 @@
         const [lon, lat] = f.geometry.coordinates;
         const latlng = L.latLng(lat, lon);
         const nom = nettoyer(f.properties && f.properties.name);
+        const tel = ((f.properties && (f.properties.phone || f.properties['contact:phone'])) || '').toString().trim();
         const id = lon.toFixed(6) + ',' + lat.toFixed(6);
         const layer = L.circleMarker(latlng, { radius: 6, bubblingMouseEvents: false });
-        const p = { id, nom, latlng, layer };
-        layer.bindPopup(() => mode === 'delegue' ? formulaire(p) : nom);
+        const p = { id, nom, tel, latlng, layer };
+        layer.bindPopup(() => mode === 'delegue' ? formulaire(p) : popupSimple(p));
         pharmacies.push(p);
         bornes.push(latlng);
       });
