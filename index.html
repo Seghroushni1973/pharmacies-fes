@@ -137,9 +137,14 @@
         }
       }
       panneau.innerHTML = proche +
-        '<label class="test"><input type="checkbox" id="testActif"' + (testActif ? ' checked' : '') + '> Test 300 m (toucher un endroit vide de la carte)</label>' +
-        '<small>' + (testActif ? 'Touchez une pharmacie pour voir son nom.' : 'Mode consultation : touchez une pharmacie pour voir son nom.') +
+        (maPosition ? '<button type="button" class="eff" id="testIci" style="float:none;margin:6px 8px 0 0">Tester ma position</button>' : '') +
+        '<label class="test"><input type="checkbox" id="testActif"' + (testActif ? ' checked' : '') + '> Test 300 m (cercle au toucher)</label>' +
+        '<small>' + (testActif
+          ? 'Touchez une pharmacie pour voir son cercle de 300 m, ou un endroit vide pour tester l’emplacement.'
+          : 'Mode consultation : touchez une pharmacie pour voir son nom et son téléphone.') +
         ' Résultat indicatif, pas une certification légale.</small>';
+      const bi = document.getElementById('testIci');
+      if (bi) bi.addEventListener('click', () => { testerPoint(maPosition.latlng); });
       document.getElementById('testActif').addEventListener('change', (e) => {
         testActif = e.target.checked;
         if (!testActif) effacerTest();
@@ -272,14 +277,13 @@
     [marqueur, cercle, ligne].forEach(l => l && map.removeLayer(l));
     marqueur = cercle = ligne = null;
   }
-  map.on('click', (e) => {
-    if (mode !== 'pharmacien' || !pharmacies.length || !testActif) return;
-    const { pharmacie, distance } = plusProche(e.latlng);
+  function testerPoint(latlng) {
+    const { pharmacie, distance } = plusProche(latlng);
     const respecte = distance >= RAYON;
     effacerTest();
-    marqueur = L.marker(e.latlng, { interactive: false, keyboard: false }).addTo(map);
-    cercle = L.circle(e.latlng, { radius: RAYON, color: respecte ? '#0a7d32' : '#c0392b', fillOpacity: 0.1, interactive: false }).addTo(map);
-    ligne = L.polyline([e.latlng, pharmacie.latlng], { color: '#333', dashArray: '5,6', weight: 2, interactive: false }).addTo(map);
+    marqueur = L.marker(latlng, { interactive: false, keyboard: false }).addTo(map);
+    cercle = L.circle(latlng, { radius: RAYON, color: respecte ? '#0a7d32' : '#c0392b', fillOpacity: 0.1, interactive: false }).addTo(map);
+    ligne = L.polyline([latlng, pharmacie.latlng], { color: '#333', dashArray: '5,6', weight: 2, interactive: false }).addTo(map);
     afficherPanneau(
       '<button type="button" class="eff" id="effTest">\u2715 Effacer</button>' +
       '<div>Pharmacie la plus proche : <b>' + pharmacie.nom + '</b></div>' +
@@ -288,12 +292,41 @@
       (respecte ? 'Règle des 300 m respectée' : 'Trop proche : moins de 300 m') + '</div>' +
       (respecte
         ? '<a class="btn-iti" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=' +
-          e.latlng.lat.toFixed(6) + ',' + e.latlng.lng.toFixed(6) + '&travelmode=driving">\u{1F9ED} Itinéraire vers cet emplacement</a>'
+          latlng.lat.toFixed(6) + ',' + latlng.lng.toFixed(6) + '&travelmode=driving">\u{1F9ED} Itinéraire vers cet emplacement</a>'
         : '') +
       '<small>Résultat indicatif (mesure depuis le point, pas la façade). Pas une certification légale.</small>'
     );
     document.getElementById('effTest').addEventListener('click', () => { effacerTest(); afficherPanneau(); });
+  }
+  map.on('click', (e) => {
+    if (mode !== 'pharmacien' || !pharmacies.length || !testActif) return;
+    testerPoint(e.latlng);
   });
+
+  // Toucher une pharmacie (test 300 m actif) : cercle de 300 m autour d'elle + pharmacies voisines
+  function zonePharmacie(p) {
+    effacerTest();
+    cercle = L.circle(p.latlng, { radius: RAYON, color: '#c0392b', fillOpacity: 0.1, interactive: false }).addTo(map);
+    const voisines = pharmacies
+      .filter(q => q !== p)
+      .map(q => ({ q, d: map.distance(p.latlng, q.latlng) }))
+      .filter(x => x.d < RAYON)
+      .sort((a, b) => a.d - b.d);
+    let liste = '';
+    voisines.slice(0, 5).forEach(x => { liste += '<div>• ' + x.q.nom + ' : ' + Math.round(x.d) + ' m</div>'; });
+    if (voisines.length > 5) liste += '<div>… et ' + (voisines.length - 5) + ' autres</div>';
+    afficherPanneau(
+      '<button type="button" class="eff" id="effTest">\u2715 Effacer</button>' +
+      '<div><b>' + p.nom + '</b></div>' +
+      '<div>Cercle de ' + RAYON + ' m autour de cette pharmacie.</div>' +
+      '<div class="' + (voisines.length ? 'non' : 'ok') + '">' +
+      (voisines.length ? voisines.length + ' autre(s) pharmacie(s) dans le cercle' : 'Aucune autre pharmacie dans le cercle') + '</div>' +
+      liste +
+      (p.tel ? '<div><a href="tel:' + p.tel.split(/[;,\/]/)[0].replace(/[^\d+]/g, '') + '">\u{1F4DE} ' + p.tel + '</a></div>' : '') +
+      '<small>Touchez ailleurs sur la carte pour tester un autre emplacement.</small>'
+    );
+    document.getElementById('effTest').addEventListener('click', () => { effacerTest(); afficherPanneau(); });
+  }
 
   // ---------- Changement de mode ----------
   function changerMode(m) {
@@ -324,7 +357,10 @@
         const id = lon.toFixed(6) + ',' + lat.toFixed(6);
         const layer = L.circleMarker(latlng, { radius: 6, bubblingMouseEvents: false });
         const p = { id, nom, tel, latlng, layer };
-        layer.bindPopup(() => mode === 'delegue' ? formulaire(p) : popupSimple(p));
+        layer.on('click', () => {
+          if (mode === 'pharmacien' && testActif) { map.closePopup(); zonePharmacie(p); return; }
+          L.popup().setLatLng(p.latlng).setContent(mode === 'delegue' ? formulaire(p) : popupSimple(p)).openOn(map);
+        });
         pharmacies.push(p);
         bornes.push(latlng);
       });
