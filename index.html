@@ -358,7 +358,8 @@
         const layer = L.circleMarker(latlng, { radius: 6, bubblingMouseEvents: false });
         const p = { id, nom, tel, latlng, layer };
         layer.on('click', () => {
-          if (mode === 'pharmacien' && testActif) { map.closePopup(); zonePharmacie(p); return; }
+          // Toucher une pharmacie = ses infos (nom, téléphone, itinéraire), jamais de cercle
+          effacerTest();
           L.popup().setLatLng(p.latlng).setContent(mode === 'delegue' ? formulaire(p) : popupSimple(p)).openOn(map);
         });
         pharmacies.push(p);
